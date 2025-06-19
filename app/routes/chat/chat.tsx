@@ -1,13 +1,14 @@
 import { useChat } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import { format } from "date-fns";
-import { BanIcon, BubblesIcon, RefreshCwIcon } from "lucide-react";
+import { BanIcon, BubblesIcon, ChevronDownIcon, MessageCircleMoreIcon, RefreshCwIcon } from "lucide-react";
 import { SendIcon } from "lucide-react";
 import { type KeyboardEventHandler, useRef } from "react";
 import { useState } from "react";
 import { redirect } from "react-router";
 import { toast } from "sonner";
 import { Spinner } from "~/components/spinner";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
 import {
@@ -210,41 +211,111 @@ export default function Chat(_: Route.ComponentProps) {
   return (
     <div className="flex h-full w-full flex-col">
       <title>Chat {_.loaderData.conversation.title}</title>
+
       {/* Messages Container - Scrollable */}
       <div className="flex-1 overflow-y-auto p-2 sm:px-8">
-        {messages.map((message) => {
-          return (
-            <AIMessage key={message.id} from={message.role === "user" ? "user" : "assistant"}>
-              <AIMessageContent>
-                {message.parts.map((part, index) => {
-                  const { type } = part;
-                  const key = `message-${message.id}-part-${index}`;
+        {messages.length === 0 ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="mx-auto max-w-2xl text-center">
+              <div className="mb-8">
+                <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 p-4">
+                  <MessageCircleMoreIcon className="h-8 w-8 text-white" />
+                </div>
+                <h1 className="mb-2 font-bold text-2xl text-gray-900 dark:text-gray-100">
+                  What would you like to know?
+                </h1>
+                <p className="text-gray-600 dark:text-gray-400">
+                  Start a conversation with your AI assistant. Ask questions, get creative, or just have a chat!
+                </p>
+              </div>
 
-                  if (type === "reasoning") {
-                    return (
-                      <div key={key}>
-                        <Collapsible>
-                          <CollapsibleTrigger>Thinking...</CollapsibleTrigger>
-                          <CollapsibleContent>
-                            <AIResponse>{part.reasoning}</AIResponse>
-                          </CollapsibleContent>
-                        </Collapsible>
-                      </div>
-                    );
-                  }
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { icon: "💡", title: "Get Ideas", description: "Brainstorm creative solutions" },
+                  { icon: "📚", title: "Learn Something", description: "Explore new topics and concepts" },
+                  { icon: "✍️", title: "Write Content", description: "Create stories, emails, or documents" },
+                  { icon: "🔍", title: "Research", description: "Get insights and analysis" },
+                  { icon: "💻", title: "Code Help", description: "Debug and write code" },
+                  { icon: "🎯", title: "Problem Solve", description: "Work through challenges" },
+                ].map((item) => (
+                  <button
+                    key={item.title}
+                    type="button"
+                    onClick={() => setInput(`Help me ${item.title.toLowerCase()}`)}
+                    className="rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+                  >
+                    <div className="mb-2 text-2xl">{item.icon}</div>
+                    <h3 className="mb-1 font-medium text-gray-900 dark:text-gray-100">{item.title}</h3>
+                    <p className="text-gray-600 text-sm dark:text-gray-400">{item.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          messages.map((message) => {
+            return (
+              <AIMessage key={message.id} from={message.role === "user" ? "user" : "assistant"}>
+                <AIMessageContent>
+                  {message.parts.map((part, index) => {
+                    const { type } = part;
+                    const key = `message-${message.id}-part-${index}`;
 
-                  if (type === "text") {
-                    return <AIResponse key={key}>{part.text}</AIResponse>;
-                  }
+                    if (type === "reasoning") {
+                      return (
+                        <div key={key} className="mb-4">
+                          <Collapsible defaultOpen={false}>
+                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-left transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/30 dark:hover:bg-amber-900/50">
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+                                <Badge
+                                  variant="secondary"
+                                  className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+                                >
+                                  Reasoning
+                                </Badge>
+                                <span className="font-medium text-amber-800 dark:text-amber-200">
+                                  {status === "streaming" ? (
+                                    <span className="animate-pulse">AI is thinking...</span>
+                                  ) : (
+                                    "AI thoughts..."
+                                  )}
+                                </span>
+                              </div>
+                              <ChevronDownIcon className="h-4 w-4 ui-open:rotate-180 transition-transform" />
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+                              <div className="prose prose-sm dark:prose-invert max-w-none">
+                                <AIResponse>{part.reasoning}</AIResponse>
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        </div>
+                      );
+                    }
 
-                  if (type === "tool-invocation") {
-                    return <AIResponse key={key}>Tool: {part.toolInvocation.toolName}</AIResponse>;
-                  }
-                })}
-              </AIMessageContent>
-            </AIMessage>
-          );
-        })}
+                    if (type === "text") {
+                      return <AIResponse key={key}>{part.text}</AIResponse>;
+                    }
+
+                    if (type === "tool-invocation") {
+                      return (
+                        <div key={key} className="mb-2">
+                          <Badge
+                            variant="outline"
+                            className="bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                          >
+                            🔧 Tool: {part.toolInvocation.toolName}
+                          </Badge>
+                        </div>
+                      );
+                    }
+                  })}
+                </AIMessageContent>
+              </AIMessage>
+            );
+          })
+        )}
         <div ref={messagesEndRef} className="h-0 w-0" />
       </div>
 

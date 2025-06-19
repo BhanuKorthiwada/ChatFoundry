@@ -38,6 +38,72 @@ export interface RequestProps {
 export const unstable_middleware = [authApiMiddleware];
 
 export async function action(_: ActionFunctionArgs) {
+  if (_.request.method === "DELETE") {
+    // Handle DELETE requests for soft delete functionality
+    if (!_.params.conversationId) {
+      return data(
+        {
+          success: false,
+          error: "Invalid conversation ID",
+        },
+        400,
+      );
+    }
+
+    try {
+      const authSession = _.context.get(authSessionContext);
+
+      // Verify the conversation belongs to the user
+      const conversation = await db.query.chatConversations.findFirst({
+        where: (t, { and, eq }) => {
+          return and(eq(t.id, _.params.conversationId!), eq(t.userId, authSession.user.id));
+        },
+        columns: {
+          id: true,
+        },
+      });
+
+      if (!conversation) {
+        return data(
+          {
+            success: false,
+            error: "Conversation not found",
+          },
+          404,
+        );
+      }
+
+      // Soft delete the conversation
+      await db
+        .update(schema.chatConversations)
+        .set({
+          isDeleted: true,
+          status: "deleted",
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.chatConversations.id, _.params.conversationId!));
+
+      // Also soft delete all messages in the conversation
+      await db
+        .update(schema.chatMessages)
+        .set({
+          isDeleted: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.chatMessages.conversationId, _.params.conversationId!));
+
+      return {
+        success: true,
+        message: "Conversation deleted successfully",
+      };
+    } catch (error) {
+      Logger.error("[API] Error occurred while deleting conversation:", error);
+      return {
+        success: false,
+        error: "Failed to delete conversation",
+      };
+    }
+  }
   if (_.request.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
   }
@@ -152,6 +218,7 @@ export async function action(_: ActionFunctionArgs) {
           .update(schema.chatConversations)
           .set({
             title: result.object.title,
+            updatedAt: new Date(),
           })
           .where(eq(schema.chatConversations.id, conversation.id));
       } catch (error) {
@@ -268,28 +335,20 @@ export async function action(_: ActionFunctionArgs) {
 
     const systemPrompt: message = {
       role: "system",
-      content: `
-            - Do not wrap your responses in html tags.
-            - Do not apply any formatting to your responses.
-            - You are an expert conversational chatbot. Your objective is to be as helpful as possible.
-            - You must keep your responses relevant to the user's prompt.
-            - You must respond with a maximum of 512 tokens (300 words).
-            - You must respond clearly and concisely, and explain your logic if required.
-            - You must not provide any personal information.
-            - Do not respond with your own personal opinions, and avoid topics unrelated to the user's prompt.
-            ${messages.length <= 1 &&
-        `- Important REMINDER: You MUST provide a 5 word title at the END of your response using <chat-title> </chat-title> tags.
-              If you do not do this, this session will error.
-              For example, <chat-title>Hello and Welcome</chat-title> Hi, how can I help you today?
-              `
-        }
+      content: `- Do not wrap your responses in html tags.
+- Do not apply any formatting to your responses.
+- You are an expert conversational chatbot. Your objective is to be as helpful as possible.
+- You must keep your responses relevant to the user's prompt.
+- You must respond with a maximum of 512 tokens (300 words).
+- You must respond clearly and concisely, and explain your logic if required.
+- You must not provide any personal information.
+- Do not respond with your own personal opinions, and avoid topics unrelated to the user's prompt.
 
-            User info:
-            - Country: ${_.request.cf?.country}
-            - City: ${_.request.cf?.city}
-            - Timezone: ${_.request.cf?.timezone}
-            - UTC Time: ${new Date().toUTCString()}
-          `,
+User info:
+- Country: ${_.request.cf?.country}
+- City: ${_.request.cf?.city}
+- Timezone: ${_.request.cf?.timezone}
+- UTC Time: ${new Date().toUTCString()}`,
     };
 
     if (handleStream) {

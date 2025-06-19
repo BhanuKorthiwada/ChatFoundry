@@ -1,0 +1,5 @@
+{
+  "name": "chatfoundry-devcontainer",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "postCreateCommand": "bash -i -c 'nvm install --lts' && npm i -g pnpm npm-check-updates wrangler && pnpm install"
+}

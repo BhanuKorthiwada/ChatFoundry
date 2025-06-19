@@ -26,6 +26,7 @@ export default [
     layout("routes/ai/layout.tsx", [
       route("provider-new", "routes/providers/provider-create.tsx"),
       route("providers/:providerId?", "routes/providers/provider-list.tsx"),
+      route("provider-settings", "routes/providers/provider-settings.tsx"),
 
       route("model-new", "routes/models/model-create.tsx"),
       route("models/:modelId?", "routes/models/model-list.tsx"),
