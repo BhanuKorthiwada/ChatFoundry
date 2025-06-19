@@ -61,12 +61,6 @@ export default [
     route("auth/*", "routes/api/better.tsx"),
     route("color-scheme", "routes/api/color-scheme.ts"),
 
-    route("providers", "routes/api/providers.tsx"),
-
-    route("models", "routes/api/models.tsx"),
-
-    route("assistants", "routes/api/assistants.tsx"),
-
     route("chat/:conversationId", "routes/api/chat.tsx"),
 
     route("data/seed", "routes/api/data-seed.tsx"),

@@ -6,7 +6,6 @@ import {
   BrainIcon,
   MessageSquareMoreIcon,
   MessagesSquareIcon,
-  Settings2,
 } from "lucide-react";
 import type * as React from "react";
 
@@ -37,16 +36,11 @@ const data = {
           url: "/chat",
         },
         {
-          title: "Starred",
-          url: "/chat-history?view=starred",
-        },
-        {
-          title: "Settings",
-          url: "/chat-settings",
+          title: "History",
+          url: "/chat-history",
         },
       ],
     },
-
     {
       title: "Providers",
       url: "/providers",
@@ -59,6 +53,10 @@ const data = {
         {
           title: "New Provider",
           url: "/provider-new",
+        },
+        {
+          title: "API Keys",
+          url: "/provider-settings",
         },
       ],
     },
@@ -83,27 +81,12 @@ const data = {
       icon: BotMessageSquareIcon,
       items: [
         {
-          title: "Popular",
-          url: "/assistants?view=popular",
+          title: "List",
+          url: "/assistants",
         },
         {
           title: "New Assistant",
           url: "/assistant-new",
-        },
-      ],
-    },
-    {
-      title: "Settings",
-      url: "/settings",
-      icon: Settings2,
-      items: [
-        {
-          title: "General",
-          url: "/settings/general",
-        },
-        {
-          title: "Billing",
-          url: "/settings/billing",
         },
       ],
     },

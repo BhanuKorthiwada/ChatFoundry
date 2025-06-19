@@ -23,7 +23,7 @@ export async function loader({ context, params, request }: Route.LoaderArgs) {
   });
 
   // Get current conversation title if we're viewing a specific conversation
-  let conversationTitle: string | undefined = undefined;
+  let conversationTitle: string | undefined;
   if (params.conversationId) {
     const currentConversation = await db.query.chatConversations.findFirst({
       where: (conversation, { eq, and }) =>

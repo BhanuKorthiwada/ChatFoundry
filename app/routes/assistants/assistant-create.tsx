@@ -1,61 +1,85 @@
-import { getFormProps, getInputProps, useForm } from "@conform-to/react";
+import {
+  getFormProps,
+  getInputProps,
+  getSelectProps,
+  getTextareaProps,
+  useForm,
+  useInputControl,
+} from "@conform-to/react";
 import { getZodConstraint, parseWithZod } from "@conform-to/zod/v4";
 import { AlertCircle, ArrowLeft, Save } from "lucide-react";
-import { Form, Link, data, redirect } from "react-router";
+import { useState } from "react";
+import { data, Form, Link, redirect } from "react-router";
 import { z } from "zod/v4";
 import { Logger } from "~/.server/log-service";
+import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { Switch } from "~/components/ui/switch";
 import { Textarea } from "~/components/ui/textarea";
 import { authSessionContext } from "~/lib/contexts";
 import { db } from "~/lib/database/db.server";
 import * as schema from "~/lib/database/schema";
+import { authMiddleware } from "~/lib/middlewares/auth-guard.server";
 import type { Route } from "./+types/assistant-create";
 
+export const unstable_middleware = [authMiddleware];
+
 const assistantSchema = z.object({
-  slug: z.string().min(1, "Slug is required").max(100),
-  name: z.string().min(1, "Name is required").max(200),
+  intent: z.enum(["create"]),
+  slug: z.string().min(1, "Slug is required").max(50),
+  name: z.string().min(1, "Name is required").max(100),
   description: z.string().optional(),
-  initMessages: z.string().optional(), // JSON string
-  status: z.enum(["active", "inactive", "deleted"]),
-  mode: z.enum(["instant", "session", "persistent"]),
-  visibility: z.enum(["public", "private", "shared"]),
-  scope: z.enum(["global", "team", "user"]),
+  category: z.string().min(1, "Category is required"),
+  tags: z.string().optional(),
+  systemPrompt: z.string().optional(),
   modelId: z.string().min(1, "Model is required"),
-  details: z.string().optional(), // JSON string
+  mode: z.enum(["instant", "session", "persistent"]).default("instant"),
+  visibility: z.enum(["public", "private", "shared"]).default("private"),
+  scope: z.enum(["global", "team", "user"]).default("user"),
+  supportsRAG: z.boolean().optional(),
+  avatar: z.string().optional(),
 });
 
-export async function loader({ context }: Route.LoaderArgs) {
-  const authSession = context.get(authSessionContext);
+export async function loader(_: Route.LoaderArgs) {
+  try {
+    const models = await db.query.aiModels.findMany({
+      where: (t, { eq, and }) => and(eq(t.isDeleted, false), eq(t.status, "active")),
+      orderBy: (t, { asc }) => asc(t.name),
+    });
 
-  if (!authSession?.user?.id) {
-    throw new Response("Unauthorized", { status: 401 });
-  }
-
-  // Fetch AI models for the dropdown
-  const models = await db.query.aiModels.findMany({
-    where: (model, { eq, and }) => and(eq(model.isDeleted, false), eq(model.status, "active")),
-    with: {
-      provider: {
-        columns: {
-          name: true,
-        },
+    const assistants = await db.query.aiAssistants.findMany({
+      where: (t, { eq }) => eq(t.isDeleted, false),
+      columns: {
+        details: true,
       },
-    },
-    orderBy: (model, { asc }) => [asc(model.name)],
-  });
+    });
 
-  return { models };
+    const categories = new Set<string>();
+    for (const assistant of assistants) {
+      if (assistant.details?.category) {
+        categories.add(assistant.details.category);
+      }
+    }
+
+    return {
+      models,
+      categories: Array.from(categories).sort(),
+    };
+  } catch (error) {
+    console.error("Error loading assistant creation data:", error);
+    throw new Response("Failed to load data", { status: 500 });
+  }
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
   const authSession = context.get(authSessionContext);
 
   if (!authSession?.user?.id) {
-    throw new Response("Unauthorized", { status: 401 });
+    throw redirect("/auth/signin?returnUrl=/assistants/assistant-create");
   }
 
   const formData = await request.formData();
@@ -65,100 +89,142 @@ export async function action({ request, context }: Route.ActionArgs) {
     return data({ result: submission.reply() }, { status: 400 });
   }
 
+  const { intent } = submission.value;
+
   try {
-    const { slug, name, description, initMessages, status, mode, visibility, scope, modelId, details } =
-      submission.value;
+    switch (intent) {
+      case "create": {
+        let parsedTags: string[] = [];
+        if (submission.value.tags) {
+          try {
+            parsedTags = JSON.parse(submission.value.tags);
+          } catch {
+            return data(
+              { result: submission.reply({ fieldErrors: { tags: ["Invalid tags format"] } }) },
+              { status: 400 },
+            );
+          }
+        }
 
-    // Check if slug already exists
-    const existingAssistant = await db.query.aiAssistants.findFirst({
-      where: (assistant, { eq, and }) => and(eq(assistant.slug, slug), eq(assistant.isDeleted, false)),
-    });
-
-    if (existingAssistant) {
-      return data(
-        {
-          result: submission.reply({
-            fieldErrors: { slug: ["An assistant with this slug already exists"] },
-          }),
-        },
-        { status: 400 },
-      );
-    }
-
-    // Parse and validate JSON fields
-    let parsedInitMessages = null;
-    let parsedDetails = null;
-
-    if (initMessages?.trim()) {
-      try {
-        parsedInitMessages = JSON.parse(initMessages);
-      } catch (_e) {
-        return data(
-          {
-            result: submission.reply({
-              fieldErrors: { initMessages: ["Invalid JSON format"] },
-            }),
+        await db.insert(schema.aiAssistants).values({
+          slug: submission.value.slug,
+          name: submission.value.name,
+          description: submission.value.description || "",
+          mode: submission.value.mode,
+          visibility: submission.value.visibility,
+          scope: submission.value.scope,
+          modelId: submission.value.modelId,
+          details: {
+            category: submission.value.category,
+            tags: parsedTags,
+            supportsRAG: submission.value.supportsRAG || false,
+            avatar: submission.value.avatar || "",
+            systemPrompt: submission.value.systemPrompt || "",
           },
-          { status: 400 },
-        );
+          initMessages: submission.value.systemPrompt
+            ? [
+                {
+                  role: "system" as const,
+                  content: submission.value.systemPrompt,
+                },
+              ]
+            : [],
+          createdBy: authSession.user.id,
+          updatedBy: authSession.user.id,
+        });
+
+        Logger.info("AI Assistant created", {
+          slug: submission.value.slug,
+          name: submission.value.name,
+          createdBy: authSession.user.id,
+        });
+        throw redirect("/assistants");
       }
     }
 
-    if (details?.trim()) {
-      try {
-        parsedDetails = JSON.parse(details);
-      } catch (_e) {
-        return data(
-          {
-            result: submission.reply({
-              fieldErrors: { details: ["Invalid JSON format"] },
-            }),
-          },
-          { status: 400 },
-        );
-      }
-    }
-
-    await db.insert(schema.aiAssistants).values({
-      slug,
-      name,
-      description: description || null,
-      initMessages: parsedInitMessages,
-      status,
-      mode,
-      visibility,
-      scope,
-      modelId,
-      details: parsedDetails,
-      createdBy: authSession.user.id,
-      updatedBy: authSession.user.id,
-    });
-
-    Logger.info("Assistant created", { slug, name, createdBy: authSession.user.id });
-
-    return redirect("/assistants");
+    return data({ result: submission.reply() });
   } catch (error) {
-    Logger.error("Error creating assistant", { error });
-    return data(
-      {
-        result: submission.reply({
-          formErrors: ["Failed to create assistant. Please try again."],
-        }),
-      },
-      { status: 500 },
-    );
+    if (error instanceof Response) {
+      throw error;
+    }
+    Logger.error("AI Assistant creation failed", { intent, error });
+    return data({ result: submission.reply({ formErrors: ["Creation failed. Please try again."] }) }, { status: 500 });
   }
 }
 
 export default function AssistantCreateRoute(_: Route.ComponentProps) {
-  const { models } = _.loaderData;
+  const { models, categories } = _.loaderData;
   const actionData = _.actionData;
+
+  const [tagInput, setTagInput] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+
   const [form, fields] = useForm({
+    // Sync server validation results
     lastResult: actionData?.result,
-    constraint: getZodConstraint(assistantSchema),
+
+    // Validation configuration - best practice
     shouldValidate: "onBlur",
     shouldRevalidate: "onInput",
+
+    // Validation constraints from schema
+    constraint: getZodConstraint(assistantSchema),
+
+    // Client-side validation
+    onValidate({ formData }) {
+      return parseWithZod(formData, { schema: assistantSchema });
+    },
+
+    // Default values
+    defaultValue: {
+      intent: "create",
+      mode: "instant",
+      visibility: "private",
+      scope: "user",
+    },
   });
+
+  const addTag = () => {
+    if (tagInput.trim() && !tags.includes(tagInput.trim())) {
+      setTags((prev) => [...prev, tagInput.trim()]);
+      setTagInput("");
+    }
+  };
+
+  const removeTag = (tagToRemove: string) => {
+    setTags((prev) => prev.filter((tag) => tag !== tagToRemove));
+  };
+
+  const generateSlug = (name: string) => {
+    if (!name) return "";
+
+    return name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .trim();
+  };
+
+  const slugControl = useInputControl(fields.slug);
+  const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const name = e.target.value;
+    if (!isSlugManuallyEdited) {
+      const newSlug = generateSlug(name);
+      slugControl.change(newSlug);
+    }
+  };
+
+  const handleSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newSlug = e.target.value;
+    slugControl.change(newSlug);
+    if (newSlug !== generateSlug(fields.name.value || "")) {
+      setIsSlugManuallyEdited(true);
+    }
+  };
 
   return (
     <div className="container mx-auto py-6">
@@ -184,84 +250,146 @@ export default function AssistantCreateRoute(_: Route.ComponentProps) {
         </CardHeader>
         <CardContent>
           <Form method="post" {...getFormProps(form)} className="space-y-6">
+            <input type="hidden" name="tags" value={JSON.stringify(tags)} />
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor={fields.slug?.id}>Slug *</Label>
                 <Input
-                  {...(fields.slug ? getInputProps(fields.slug, { type: "text" }) : {})}
-                  placeholder="e.g., coding-helper, data-analyst"
+                  {...getInputProps(fields.slug, { type: "text" })}
+                  placeholder="my-ai-assistant"
+                  value={slugControl.value}
+                  onChange={handleSlugChange}
+                  onBlur={slugControl.blur}
+                  onFocus={slugControl.focus}
                 />
-                {fields.slug?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.slug.errors[0]}
-                  </div>
-                )}
+                <div id={fields.slug?.errorId} className="text-destructive text-sm">
+                  {fields.slug?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor={fields.name?.id}>Name *</Label>
                 <Input
-                  {...(fields.name ? getInputProps(fields.name, { type: "text" }) : {})}
-                  placeholder="e.g., Coding Helper, Data Analyst"
+                  {...getInputProps(fields.name, { type: "text" })}
+                  placeholder="My AI Assistant"
+                  onChange={handleNameChange}
                 />
-                {fields.name?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.name.errors[0]}
-                  </div>
-                )}
+                <div id={fields.name?.errorId} className="text-destructive text-sm">
+                  {fields.name?.errors}
+                </div>
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor={fields.description?.id}>Description</Label>
               <Textarea
-                {...(fields.description ? getInputProps(fields.description, { type: "text" }) : {})}
-                placeholder="Brief description of the assistant's purpose and capabilities..."
+                {...getTextareaProps(fields.description)}
+                placeholder="Describe what this assistant does..."
                 rows={3}
               />
+              <div id={fields.description?.errorId} className="text-destructive text-sm">
+                {fields.description?.errors}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor={fields.category?.id}>Category *</Label>
+                <Select name={fields.category?.name}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Writing">Writing</SelectItem>
+                    <SelectItem value="Programming">Programming</SelectItem>
+                    <SelectItem value="Research">Research</SelectItem>
+                    <SelectItem value="Analysis">Analysis</SelectItem>
+                    <SelectItem value="Creative">Creative</SelectItem>
+                    <SelectItem value="Support">Support</SelectItem>
+                    <SelectItem value="Tools">Tools</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                    {categories
+                      .filter(
+                        (cat) =>
+                          ![
+                            "Writing",
+                            "Programming",
+                            "Research",
+                            "Analysis",
+                            "Creative",
+                            "Support",
+                            "Tools",
+                            "Other",
+                          ].includes(cat),
+                      )
+                      .map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {cat}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <div id={fields.category?.errorId} className="text-destructive text-sm">
+                  {fields.category?.errors}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor={fields.modelId?.id}>Model *</Label>
+                <Select name={fields.modelId?.name}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {models.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div id={fields.modelId?.errorId} className="text-destructive text-sm">
+                  {fields.modelId?.errors}
+                </div>
+              </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor={fields.modelId?.id}>AI Model *</Label>
-              <Select name={fields.modelId?.name}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select AI model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((model) => (
-                    <SelectItem key={model.id} value={model.id}>
-                      {model.name} ({model.provider.name})
-                    </SelectItem>
+              <Label>Tags</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  placeholder="Add tag..."
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTag();
+                    }
+                  }}
+                />
+                <Button type="button" onClick={addTag}>
+                  Add
+                </Button>
+              </div>
+              {tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {tags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="cursor-pointer">
+                      {tag}
+                      <button type="button" onClick={() => removeTag(tag)} className="ml-1 text-xs">
+                        ×
+                      </button>
+                    </Badge>
                   ))}
-                </SelectContent>
-              </Select>
-              {fields.modelId?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.modelId.errors[0]}
                 </div>
               )}
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="space-y-2">
-                <Label htmlFor={fields.status?.id}>Status *</Label>
-                <Select name={fields.status?.name} defaultValue="active">
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                    <SelectItem value="deleted">Deleted</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor={fields.mode?.id}>Mode *</Label>
+                <Label htmlFor={fields.mode?.id}>Mode</Label>
                 <Select name={fields.mode?.name} defaultValue="instant">
                   <SelectTrigger>
                     <SelectValue placeholder="Select mode" />
@@ -272,76 +400,77 @@ export default function AssistantCreateRoute(_: Route.ComponentProps) {
                     <SelectItem value="persistent">Persistent</SelectItem>
                   </SelectContent>
                 </Select>
+                <div id={fields.mode?.errorId} className="text-destructive text-sm">
+                  {fields.mode?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor={fields.visibility?.id}>Visibility *</Label>
+                <Label htmlFor={fields.visibility?.id}>Visibility</Label>
                 <Select name={fields.visibility?.name} defaultValue="private">
                   <SelectTrigger>
                     <SelectValue placeholder="Select visibility" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="public">Public</SelectItem>
                     <SelectItem value="private">Private</SelectItem>
                     <SelectItem value="shared">Shared</SelectItem>
+                    <SelectItem value="public">Public</SelectItem>
                   </SelectContent>
                 </Select>
+                <div id={fields.visibility?.errorId} className="text-destructive text-sm">
+                  {fields.visibility?.errors}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor={fields.scope?.id}>Scope</Label>
+                <Select name={fields.scope?.name} defaultValue="user">
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select scope" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="user">Personal</SelectItem>
+                    <SelectItem value="team">Team</SelectItem>
+                    <SelectItem value="global">Global</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div id={fields.scope?.errorId} className="text-destructive text-sm">
+                  {fields.scope?.errors}
+                </div>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor={fields.scope?.id}>Scope *</Label>
-              <Select name={fields.scope?.name} defaultValue="user">
-                <SelectTrigger>
-                  <SelectValue placeholder="Select scope" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="global">Global</SelectItem>
-                  <SelectItem value="team">Team</SelectItem>
-                  <SelectItem value="user">User</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="flex items-center space-x-2">
+              <Switch name="supportsRAG" />
+              <Label htmlFor="supportsRAG">Supports RAG (Retrieval-Augmented Generation)</Label>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor={fields.initMessages?.id}>Initial Messages (JSON)</Label>
+              <Label htmlFor={fields.systemPrompt?.id}>System Prompt</Label>
               <Textarea
-                {...(fields.initMessages ? getInputProps(fields.initMessages, { type: "text" }) : {})}
-                placeholder='{"system": "You are a helpful assistant", "user": "Hello!"}'
-                rows={4}
+                {...getTextareaProps(fields.systemPrompt)}
+                placeholder="You are a helpful assistant that..."
+                rows={6}
               />
-              {fields.initMessages?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.initMessages.errors[0]}
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor={fields.details?.id}>Additional Details (JSON)</Label>
-              <Textarea
-                {...(fields.details ? getInputProps(fields.details, { type: "text" }) : {})}
-                placeholder='{"tags": ["coding", "helper"], "supportsRAG": true}'
-                rows={3}
-              />
-              {fields.details?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.details.errors[0]}
-                </div>
-              )}
+              <div id={fields.systemPrompt?.errorId} className="text-destructive text-sm">
+                {fields.systemPrompt?.errors}
+              </div>
             </div>
 
             {form.errors && (
-              <div className="flex items-center gap-2 text-destructive text-sm">
-                <AlertCircle className="h-4 w-4" />
-                {form.errors[0]}
+              <div className="rounded-md bg-destructive/15 p-3" id={form.errorId}>
+                <div className="flex">
+                  <AlertCircle className="h-5 w-5 text-destructive" />
+                  <div className="ml-3">
+                    <h3 className="font-medium text-destructive text-sm">Validation Error</h3>
+                    <div className="mt-1 text-destructive text-sm">{form.errors}</div>
+                  </div>
+                </div>
               </div>
             )}
 
             <div className="flex items-center gap-4 pt-4">
-              <Button type="submit" className="flex items-center gap-2">
+              <Button type="submit" name="intent" value="create" className="flex items-center gap-2">
                 <Save className="h-4 w-4" />
                 Create Assistant
               </Button>

@@ -1,10 +1,8 @@
 import { useChat } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import { format } from "date-fns";
-import { BanIcon, BubblesIcon, ChevronDownIcon, MessageCircleMoreIcon, RefreshCwIcon } from "lucide-react";
-import { SendIcon } from "lucide-react";
-import { type KeyboardEventHandler, useRef } from "react";
-import { useState } from "react";
+import { BanIcon, BubblesIcon, ChevronDownIcon, MessageCircleMoreIcon, RefreshCwIcon, SendIcon } from "lucide-react";
+import { type KeyboardEventHandler, useEffect, useRef, useState } from "react";
 import { redirect } from "react-router";
 import { toast } from "sonner";
 import { Spinner } from "~/components/spinner";
@@ -121,14 +119,15 @@ export async function loader(_: Route.LoaderArgs) {
     },
   });
 
-  const messages: UIMessage[] = dbMessages.map((m) => ({
-    id: m.id,
-    role: m.role === "tool" ? "assistant" : m.role,
-    content: "",
-    type: "text",
-    parts: m.parts,
-    createdAt: m.createdAt || new Date(),
-  }));
+  const messages: UIMessage[] = dbMessages.map((m) => {
+    return {
+      id: m.id,
+      role: m.role === "tool" ? "assistant" : m.role,
+      content: "", // Keep empty, use parts instead
+      parts: m.parts || [],
+      createdAt: m.createdAt || new Date(),
+    };
+  });
 
   const models = await db.query.aiModels.findMany({
     where: (t, { eq }) => {
@@ -193,12 +192,9 @@ export default function Chat(_: Route.ComponentProps) {
       },
       onFinish: () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-
         setTimeout(() => textareaRef.current?.focus(), 100);
-
         setSuggestions(["What is this?", "What is the source?", "Who are you?", "What is your name?"]);
       },
-
       onError: (error: any) => {
         console.error("Chat error:", error);
         toast.error("Response Error", {
@@ -207,6 +203,13 @@ export default function Chat(_: Route.ComponentProps) {
       },
       credentials: "same-origin",
     });
+
+  // Auto-scroll effect for better UX
+  useEffect(() => {
+    if (status === "streaming") {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, status]);
 
   return (
     <div className="flex h-full w-full flex-col">
@@ -253,40 +256,39 @@ export default function Chat(_: Route.ComponentProps) {
             </div>
           </div>
         ) : (
-          messages.map((message) => {
+          messages.map((message, messageIndex) => {
+            const isLastMessage = messageIndex === messages.length - 1;
+            const isStreaming = status === "streaming" && isLastMessage && message.role === "assistant";
+
             return (
               <AIMessage key={message.id} from={message.role === "user" ? "user" : "assistant"}>
                 <AIMessageContent>
-                  {message.parts.map((part, index) => {
-                    const { type } = part;
-                    const key = `message-${message.id}-part-${index}`;
+                  {message.parts?.map((part, partIndex) => {
+                    const partKey = `message-${message.id}-part-${partIndex}`;
 
-                    if (type === "reasoning") {
+                    if (part.type === "reasoning" && reasoningEnabled) {
                       return (
-                        <div key={key} className="mb-4">
-                          <Collapsible defaultOpen={false}>
-                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-left transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/30 dark:hover:bg-amber-900/50">
+                        <div key={partKey} className="mb-4">
+                          <Collapsible defaultOpen={isStreaming}>
+                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-left transition-colors hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-900/30 dark:hover:bg-blue-900/50">
                               <div className="flex items-center gap-2">
-                                <div className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-                                <Badge
-                                  variant="secondary"
-                                  className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-                                >
-                                  Reasoning
-                                </Badge>
-                                <span className="font-medium text-amber-800 dark:text-amber-200">
-                                  {status === "streaming" ? (
+                                {isStreaming && <div className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />}
+                                <Badge variant="secondary">{isStreaming ? "Thinking" : "Reasoning"}</Badge>
+                                <span className="font-medium text-blue-700 dark:text-blue-200">
+                                  {isStreaming ? (
                                     <span className="animate-pulse">AI is thinking...</span>
                                   ) : (
-                                    "AI thoughts..."
+                                    "View AI thoughts"
                                   )}
                                 </span>
                               </div>
                               <ChevronDownIcon className="h-4 w-4 ui-open:rotate-180 transition-transform" />
                             </CollapsibleTrigger>
-                            <CollapsibleContent className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+                            <CollapsibleContent className="mt-1 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
                               <div className="prose prose-sm dark:prose-invert max-w-none">
-                                <AIResponse>{part.reasoning}</AIResponse>
+                                <AIResponse className={isStreaming ? "show-streaming" : ""}>
+                                  {part.reasoning}
+                                </AIResponse>
                               </div>
                             </CollapsibleContent>
                           </Collapsible>
@@ -294,13 +296,20 @@ export default function Chat(_: Route.ComponentProps) {
                       );
                     }
 
-                    if (type === "text") {
-                      return <AIResponse key={key}>{part.text}</AIResponse>;
+                    if (part.type === "text") {
+                      const isLastTextPart = message.parts.slice(partIndex + 1).every((p) => p.type !== "text");
+                      return (
+                        <div key={partKey}>
+                          <AIResponse className={isStreaming ? "show-streaming" : isLastTextPart ? "show-cursor" : ""}>
+                            {part.text}
+                          </AIResponse>
+                        </div>
+                      );
                     }
 
-                    if (type === "tool-invocation") {
+                    if (part.type === "tool-invocation") {
                       return (
-                        <div key={key} className="mb-2">
+                        <div key={partKey} className="mb-2">
                           <Badge
                             variant="outline"
                             className="bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
@@ -310,7 +319,18 @@ export default function Chat(_: Route.ComponentProps) {
                         </div>
                       );
                     }
+
+                    return null;
                   })}
+
+                  {isStreaming && (!message.parts || message.parts.length === 0) && (
+                    <div className="flex items-center gap-2">
+                      <Spinner className="h-4 w-4" />
+                      <span className="text-gray-500 text-sm">
+                        {reasoningEnabled ? "Starting to think..." : "Generating response..."}
+                      </span>
+                    </div>
+                  )}
                 </AIMessageContent>
               </AIMessage>
             );
@@ -324,9 +344,24 @@ export default function Chat(_: Route.ComponentProps) {
         {(status === "submitted" || status === "streaming") && (
           <div className="flex justify-center p-1">
             <div className="flex items-center gap-2">
-              {status === "submitted" && <Spinner className="h-5 w-5" />}
+              {status === "submitted" && (
+                <div className="flex items-center gap-2">
+                  <Spinner className="h-5 w-5" />
+                  <span className="text-gray-600 text-sm dark:text-gray-400">
+                    {reasoningEnabled ? "Starting to think..." : "Preparing response..."}
+                  </span>
+                </div>
+              )}
+              {status === "streaming" && (
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+                  <span className="text-gray-600 text-sm dark:text-gray-400">
+                    {reasoningEnabled ? "Thinking and responding..." : "Streaming response..."}
+                  </span>
+                </div>
+              )}
               <Button variant="outline" size="sm" onClick={() => stop()}>
-                <BanIcon /> Stop
+                <BanIcon className="h-4 w-4" /> Stop
               </Button>
             </div>
           </div>
@@ -335,7 +370,7 @@ export default function Chat(_: Route.ComponentProps) {
         {(status === "ready" || status === "error") && messages.length > 0 && (
           <div className="flex justify-center p-1">
             <Button variant="outline" size="sm" onClick={() => reload()}>
-              <RefreshCwIcon /> Regenerate
+              <RefreshCwIcon className="h-4 w-4" /> Regenerate
             </Button>
           </div>
         )}
@@ -368,7 +403,9 @@ export default function Chat(_: Route.ComponentProps) {
               disabled={isSubmitting || status === "streaming"}
               placeholder={
                 status === "streaming"
-                  ? "AI is responding..."
+                  ? reasoningEnabled
+                    ? "AI is thinking and responding..."
+                    : "AI is responding..."
                   : "Type your message... (Enter to send, Shift+Enter for new line)"
               }
             />
@@ -390,16 +427,16 @@ export default function Chat(_: Route.ComponentProps) {
 
                 <Tooltip>
                   <TooltipTrigger>
-                    <Toggle id="stream-toggle" pressed={streamEnabled} onPressedChange={setStreamEnabled}>
+                    <Toggle pressed={streamEnabled} onPressedChange={setStreamEnabled}>
                       Stream
                     </Toggle>
                   </TooltipTrigger>
-                  <TooltipContent>Enable or disable streaming</TooltipContent>
+                  <TooltipContent>Enable real-time streaming responses</TooltipContent>
                 </Tooltip>
 
                 <Tooltip>
                   <TooltipTrigger>
-                    <Toggle id="submit-toggle" pressed={submitOnEnter} onPressedChange={setSubmitOnEnter}>
+                    <Toggle pressed={submitOnEnter} onPressedChange={setSubmitOnEnter}>
                       Enter
                     </Toggle>
                   </TooltipTrigger>
@@ -408,14 +445,14 @@ export default function Chat(_: Route.ComponentProps) {
 
                 <Tooltip>
                   <TooltipTrigger>
-                    <Toggle id="reasoning-toggle" pressed={reasoningEnabled} onPressedChange={setReasoningEnabled}>
+                    <Toggle pressed={reasoningEnabled} onPressedChange={setReasoningEnabled}>
                       Reasoning
                     </Toggle>
                   </TooltipTrigger>
-                  <TooltipContent>Enable or disable reasoning</TooltipContent>
+                  <TooltipContent>Show AI thinking process and reasoning steps</TooltipContent>
                 </Tooltip>
               </AIInputTools>
-              <AIInputSubmit>
+              <AIInputSubmit disabled={isSubmitting || status === "streaming"}>
                 <SendIcon size={16} />
               </AIInputSubmit>
             </AIInputToolbar>

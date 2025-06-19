@@ -4,6 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
 import { EmailService } from "~/.server/email-service";
 import { db } from "~/lib/database/db.server";
+import { Logger } from "~/.server/log-service";
 
 let _auth: ReturnType<typeof betterAuth>;
 
@@ -63,14 +64,18 @@ export function serverAuth() {
         autoSignInAfterVerification: true,
         sendVerificationEmail: async ({ user, url, token }) => {
           if (cfEnv.ENVIRONMENT === "development") {
-            console.log("Send email to verify email address");
-            console.log(user, url, token);
+            Logger.info("Send email to verify email address", "user", user, "url", url, "token", token);
           }
+          // Send verification email, ignore for any errors
+          try {
           const emailService = new EmailService();
           await emailService.sendVerificationEmail({
             to: user.email,
             token,
           });
+          } catch (error) {
+            Logger.error("Error sending verification email:", error);
+          }
         },
       },
       socialProviders: {

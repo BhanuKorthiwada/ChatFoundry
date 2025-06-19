@@ -44,7 +44,7 @@ export const AiLayout = ({
   const activeBreadcrumbs = breadcrumbs || defaultBreadcrumbs;
 
   return (
-    <div className="[--header-height:calc(--spacing(14))]">
+    <div className="[--header-height:calc(--spacing(18))]">
       <SidebarProvider className="min-h-[calc(100svh-var(--header-height))]">
         <AppSidebar conversations={conversations} />
         <SidebarInset className="flex h-[calc(100svh-var(--header-height))] flex-col">
@@ -70,7 +70,7 @@ export const AiLayout = ({
               </Breadcrumb>
             </div>
           </header>
-          <div className="flex-1 overflow-hidden">{children}</div>
+          <div className="flex-1 overflow-y-auto">{children}</div>
         </SidebarInset>
       </SidebarProvider>
     </div>

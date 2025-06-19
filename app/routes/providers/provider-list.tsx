@@ -1,9 +1,9 @@
-import { getFormProps, getInputProps, useForm } from "@conform-to/react";
+import { getFormProps, getInputProps, getTextareaProps, useForm } from "@conform-to/react";
 import { getZodConstraint, parseWithZod } from "@conform-to/zod/v4";
 import { eq } from "drizzle-orm";
-import { AlertCircle, Edit2, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Edit2, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Form, Link, data } from "react-router";
+import { data, Form, Link, useFetcher } from "react-router";
 import { z } from "zod/v4";
 import { Logger } from "~/.server/log-service";
 import {
@@ -18,11 +18,20 @@ import {
   AlertDialogTrigger,
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
-import { Card, CardContent } from "~/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "~/components/ui/dialog";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "~/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/ui/table";
 import { Textarea } from "~/components/ui/textarea";
 import { authSessionContext } from "~/lib/contexts";
@@ -30,19 +39,25 @@ import { db } from "~/lib/database/db.server";
 import * as schema from "~/lib/database/schema";
 import type { Route } from "./+types/provider-list";
 
-const providerSchema = z.object({
-  intent: z.enum(["update", "delete"]),
-  id: z.string().min(1, "Provider ID is required"),
-  slug: z.string().min(1, "Slug is required").max(50, "Slug must be less than 50 characters"),
-  name: z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
-  description: z.string().optional(),
-  baseUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
-  apiVersion: z.string().optional(),
-  status: z.enum(["active", "inactive", "deprecated"]),
-  authType: z.enum(["api_key", "oauth", "none"]).optional(),
-  headers: z.string().optional(), // JSON string
-  rateLimits: z.string().optional(), // JSON string
-});
+const providerSchema = z.discriminatedUnion("intent", [
+  z.object({
+    intent: z.literal("update"),
+    id: z.string().min(1, "Provider ID is required"),
+    slug: z.string().min(1, "Slug is required").max(50, "Slug must be less than 50 characters"),
+    name: z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
+    description: z.string().optional(),
+    baseUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
+    apiVersion: z.string().optional(),
+    status: z.enum(["active", "inactive", "deprecated"]),
+    authType: z.enum(["api_key", "oauth", "none"]).optional(),
+    headers: z.string().optional(), // JSON string
+    rateLimits: z.string().optional(), // JSON string
+  }),
+  z.object({
+    intent: z.literal("delete"),
+    id: z.string().min(1, "Provider ID is required"),
+  }),
+]);
 
 export async function loader(_: Route.LoaderArgs) {
   const providers = await db.query.aiProviders.findMany({
@@ -74,14 +89,16 @@ export async function action({ request, context }: Route.ActionArgs) {
     );
   }
 
-  const { intent, id, slug, name, description, baseUrl, apiVersion, status, authType, headers, rateLimits } =
-    submission.value;
+  const { intent, id } = submission.value;
   try {
     switch (intent) {
       case "update": {
         if (!id) {
           return data({ success: false, error: "Provider ID required for update" }, { status: 400 });
         }
+
+        const { slug, name, description, baseUrl, apiVersion, status, authType, headers, rateLimits } =
+          submission.value;
 
         // Check if slug conflicts with another provider
         const existingProvider = await db.query.aiProviders.findFirst({
@@ -159,7 +176,10 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       case "delete": {
         if (!id) {
-          return data({ success: false, error: "Provider ID required for delete" }, { status: 400 });
+          return data(
+            { result: submission.reply({ formErrors: ["Provider ID required for delete"] }) },
+            { status: 400 },
+          );
         }
 
         await db
@@ -176,7 +196,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
     }
 
-    return data({ success: true });
+    return data({ result: submission.reply() });
   } catch (error) {
     Logger.error("AI Provider operation failed", error);
     return data(
@@ -193,16 +213,48 @@ export async function action({ request, context }: Route.ActionArgs) {
 export default function Providers(_: Route.ComponentProps) {
   const { providers } = _.loaderData;
   const [editingProvider, setEditingProvider] = useState<(typeof providers)[0] | null>(null);
+  const [lastActionData, setLastActionData] = useState<any>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const deleteFetcher = useFetcher();
+
+  // Filter providers based on search term
+  const filteredProviders = providers.filter(
+    (provider) =>
+      provider.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      provider.slug.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      provider.description?.toLowerCase().includes(searchTerm.toLowerCase()),
+  );
 
   useEffect(() => {
-    if (_.actionData && "success" in _.actionData && _.actionData.success && editingProvider) {
-      setEditingProvider(null);
+    // Only close dialog if this is a new successful action (not a cached one)
+    if (
+      _.actionData &&
+      "result" in _.actionData &&
+      _.actionData.result &&
+      editingProvider &&
+      _.actionData !== lastActionData
+    ) {
+      if (_.actionData.result.status === "success") {
+        setEditingProvider(null);
+        setLastActionData(_.actionData);
+      }
     }
-  }, [_.actionData, editingProvider]);
+  }, [_.actionData, editingProvider, lastActionData]);
 
   const [form, fields] = useForm({
     id: editingProvider ? `edit-${editingProvider.id}` : undefined,
+
+    // Sync server validation results
+    lastResult: _.actionData && "result" in _.actionData ? _.actionData.result : undefined,
+
+    // Validation configuration - best practice
+    shouldValidate: "onBlur",
+    shouldRevalidate: "onInput",
+
+    // Validation constraints from schema
     constraint: getZodConstraint(providerSchema),
+
+    // Client-side validation
     onValidate({ formData }) {
       return parseWithZod(formData, { schema: providerSchema });
     },
@@ -247,242 +299,275 @@ export default function Providers(_: Route.ComponentProps) {
         </Button>
       </div>
 
-      <Dialog open={!!editingProvider} onOpenChange={handleCloseDialog}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit Provider</DialogTitle>
-            <DialogDescription>Update the provider configuration</DialogDescription>
-          </DialogHeader>
+      <Sheet open={!!editingProvider} onOpenChange={handleCloseDialog}>
+        <SheetContent className="flex flex-col">
+          <SheetHeader>
+            <SheetTitle>Edit Provider</SheetTitle>
+            <SheetDescription>Update the provider configuration. Changes will be saved immediately.</SheetDescription>
+          </SheetHeader>
 
           {editingProvider && (
-            <Form method="post" {...getFormProps(form)} key={editingProvider.id}>
+            <Form method="post" {...getFormProps(form)} key={editingProvider.id} className="flex flex-1 flex-col">
               <input type="hidden" name="intent" value="update" />
               <input type="hidden" name="id" value={editingProvider.id} />
 
-              <div className="grid gap-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor={fields.slug.id}>Slug *</Label>
-                    <Input {...getInputProps(fields.slug, { type: "text" })} placeholder="openai" />
-                    {fields.slug.errors && <p className="mt-1 text-destructive text-sm">{fields.slug.errors[0]}</p>}
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="space-y-6">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor={fields.slug.id}>Slug *</Label>
+                      <Input {...getInputProps(fields.slug, { type: "text" })} placeholder="openai" />
+                      <div id={fields.slug.errorId} className="text-destructive text-sm">
+                        {fields.slug.errors}
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor={fields.name.id}>Name *</Label>
+                      <Input {...getInputProps(fields.name, { type: "text" })} placeholder="OpenAI" />
+                      <div id={fields.name.errorId} className="text-destructive text-sm">
+                        {fields.name.errors}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <Label htmlFor={fields.name.id}>Name *</Label>
-                    <Input {...getInputProps(fields.name, { type: "text" })} placeholder="OpenAI" />
-                    {fields.name.errors && <p className="mt-1 text-destructive text-sm">{fields.name.errors[0]}</p>}
-                  </div>
-                </div>
 
-                <div>
-                  <Label htmlFor={fields.description.id}>Description</Label>
-                  <Textarea
-                    {...getInputProps(fields.description, { type: "text" })}
-                    placeholder="Provider description..."
-                  />
-                  {fields.description.errors && (
-                    <p className="mt-1 text-destructive text-sm">{fields.description.errors[0]}</p>
+                  <div>
+                    <Label htmlFor={fields.description.id}>Description</Label>
+                    <Textarea {...getTextareaProps(fields.description)} placeholder="Provider description..." />
+                    <div id={fields.description.errorId} className="text-destructive text-sm">
+                      {fields.description.errors}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor={fields.baseUrl.id}>Base URL</Label>
+                      <Input {...getInputProps(fields.baseUrl, { type: "url" })} placeholder="https://api.openai.com" />
+                      <div id={fields.baseUrl.errorId} className="text-destructive text-sm">
+                        {fields.baseUrl.errors}
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor={fields.apiVersion.id}>API Version</Label>
+                      <Input {...getInputProps(fields.apiVersion, { type: "text" })} placeholder="v1" />
+                      <div id={fields.apiVersion.errorId} className="text-destructive text-sm">
+                        {fields.apiVersion.errors}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor={fields.status.id}>Status *</Label>
+                      <Select name={fields.status.name} defaultValue={editingProvider.status}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="inactive">Inactive</SelectItem>
+                          <SelectItem value="deprecated">Deprecated</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div id={fields.status.errorId} className="text-destructive text-sm">
+                        {fields.status.errors}
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor={fields.authType.id}>Auth Type</Label>
+                      <Select name={fields.authType.name} defaultValue={editingProvider.details?.authType || "none"}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select auth type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          <SelectItem value="api_key">API Key</SelectItem>
+                          <SelectItem value="oauth">OAuth</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div id={fields.authType.errorId} className="text-destructive text-sm">
+                        {fields.authType.errors}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor={fields.headers.id}>Headers (JSON)</Label>
+                    <Textarea
+                      {...getTextareaProps(fields.headers)}
+                      placeholder='{"Authorization": "Bearer token", "Content-Type": "application/json"}'
+                      rows={3}
+                    />
+                    <div id={fields.headers.errorId} className="text-destructive text-sm">
+                      {fields.headers.errors}
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor={fields.rateLimits.id}>Rate Limits (JSON)</Label>
+                    <Textarea
+                      {...getTextareaProps(fields.rateLimits)}
+                      placeholder='{"requestsPerMinute": 100, "tokensPerMinute": 60000}'
+                      rows={3}
+                    />
+                    <div id={fields.rateLimits.errorId} className="text-destructive text-sm">
+                      {fields.rateLimits.errors}
+                    </div>
+                  </div>
+
+                  {form.errors && (
+                    <div className="rounded-md bg-destructive/15 p-3" id={form.errorId}>
+                      <div className="flex">
+                        <AlertCircle className="h-5 w-5 text-destructive" />
+                        <div className="ml-3">
+                          <h3 className="font-medium text-destructive text-sm">Validation Error</h3>
+                          <div className="mt-1 text-destructive text-sm">{form.errors}</div>
+                        </div>
+                      </div>
+                    </div>
                   )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor={fields.baseUrl.id}>Base URL</Label>
-                    <Input {...getInputProps(fields.baseUrl, { type: "url" })} placeholder="https://api.openai.com" />
-                    {fields.baseUrl.errors && (
-                      <p className="mt-1 text-destructive text-sm">{fields.baseUrl.errors[0]}</p>
-                    )}
-                  </div>
-                  <div>
-                    <Label htmlFor={fields.apiVersion.id}>API Version</Label>
-                    <Input {...getInputProps(fields.apiVersion, { type: "text" })} placeholder="v1" />
-                    {fields.apiVersion.errors && (
-                      <p className="mt-1 text-destructive text-sm">{fields.apiVersion.errors[0]}</p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor={fields.status.id}>Status *</Label>
-                    <Select name={fields.status.name} defaultValue={editingProvider.status}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="inactive">Inactive</SelectItem>
-                        <SelectItem value="deprecated">Deprecated</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {fields.status.errors && <p className="mt-1 text-destructive text-sm">{fields.status.errors[0]}</p>}
-                  </div>
-                  <div>
-                    <Label htmlFor={fields.authType.id}>Auth Type</Label>
-                    <Select name={fields.authType.name} defaultValue={editingProvider.details?.authType || "none"}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select auth type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">None</SelectItem>
-                        <SelectItem value="api_key">API Key</SelectItem>
-                        <SelectItem value="oauth">OAuth</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {fields.authType.errors && (
-                      <p className="mt-1 text-destructive text-sm">{fields.authType.errors[0]}</p>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <Label htmlFor={fields.headers.id}>Headers (JSON)</Label>
-                  <Textarea
-                    {...getInputProps(fields.headers, { type: "text" })}
-                    placeholder='{"Authorization": "Bearer token", "Content-Type": "application/json"}'
-                    rows={3}
-                  />
-                  {fields.headers.errors && <p className="mt-1 text-destructive text-sm">{fields.headers.errors[0]}</p>}
-                </div>
-
-                <div>
-                  <Label htmlFor={fields.rateLimits.id}>Rate Limits (JSON)</Label>
-                  <Textarea
-                    {...getInputProps(fields.rateLimits, { type: "text" })}
-                    placeholder='{"requestsPerMinute": 100, "tokensPerMinute": 60000}'
-                    rows={3}
-                  />
-                  {fields.rateLimits.errors && (
-                    <p className="mt-1 text-destructive text-sm">{fields.rateLimits.errors[0]}</p>
-                  )}
-                </div>
-
-                {form.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {form.errors[0]}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={handleCloseDialog}>
-                    Cancel
-                  </Button>
-                  <Button type="submit">Update Provider</Button>
                 </div>
               </div>
+
+              <SheetFooter className="gap-3 border-t p-6">
+                <Button type="submit">Update Provider</Button>
+                <SheetClose asChild>
+                  <Button type="button" variant="outline">
+                    Cancel
+                  </Button>
+                </SheetClose>
+              </SheetFooter>
             </Form>
           )}
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
 
       <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Slug</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Base URL</TableHead>
-                <TableHead>Auth Type</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {providers.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    No providers found. Add your first provider to get started.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                providers.map((provider) => (
-                  <TableRow key={provider.id}>
-                    <TableCell>
-                      <div className="space-y-1">
-                        <div className="font-medium">{provider.name}</div>
-                        {provider.description && (
-                          <div className="text-muted-foreground text-sm">{provider.description}</div>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">{provider.slug}</TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-1 font-medium text-xs ${
-                          provider.status === "active"
-                            ? "bg-green-100 text-green-800"
-                            : provider.status === "inactive"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {provider.status}
-                      </span>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {provider.baseUrl || <span className="text-muted-foreground">Not set</span>}
-                    </TableCell>
-                    <TableCell className="text-sm capitalize">{provider.details?.authType || "none"}</TableCell>
-                    <TableCell className="text-right">
-                      {" "}
-                      <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(provider)}>
-                          <Edit2 className="h-4 w-4" />
-                        </Button>{" "}
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="sm">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete Provider</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Are you sure you want to delete "{provider.name}"? This action cannot be undone and will
-                                remove the provider from your system.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => {
-                                  const formData = new FormData();
-                                  formData.set("intent", "delete");
-                                  formData.set("id", provider.id);
-
-                                  // Submit form programmatically
-                                  const form = document.createElement("form");
-                                  form.method = "POST";
-                                  form.style.display = "none";
-
-                                  // Append all form data entries
-                                  for (const [key, value] of formData.entries()) {
-                                    const input = document.createElement("input");
-                                    input.type = "hidden";
-                                    input.name = key;
-                                    input.value = value as string;
-                                    form.appendChild(input);
-                                  }
-
-                                  document.body.appendChild(form);
-                                  form.submit();
-                                }}
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              >
-                                Delete Provider
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>All Providers</CardTitle>
+              <CardDescription>
+                {filteredProviders.length} provider{filteredProviders.length !== 1 ? "s" : ""} found
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute top-2.5 left-2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search providers..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-[300px] pl-8"
+                />
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {filteredProviders.length === 0 ? (
+            <div className="py-12 text-center">
+              <p className="mb-4 text-muted-foreground">
+                {searchTerm ? "No providers match your search." : "No providers found."}
+              </p>
+              {!searchTerm && (
+                <Button asChild>
+                  <Link to="/provider-new">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Your First Provider
+                  </Link>
+                </Button>
               )}
-            </TableBody>
-          </Table>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-md border">
+              <Table>
+                <TableHeader className="sticky top-0 bg-background">
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Slug</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Base URL</TableHead>
+                    <TableHead>Auth Type</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredProviders.map((provider) => (
+                    <TableRow key={provider.id}>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <div className="font-medium">{provider.name}</div>
+                          {provider.description && (
+                            <div className="text-muted-foreground text-sm">{provider.description}</div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">{provider.slug}</TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-1 font-medium text-xs ${
+                            provider.status === "active"
+                              ? "bg-green-100 text-green-800"
+                              : provider.status === "inactive"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-red-100 text-red-800"
+                          }`}
+                        >
+                          {provider.status}
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {provider.baseUrl || <span className="text-muted-foreground">Not set</span>}
+                      </TableCell>
+                      <TableCell className="text-sm capitalize">{provider.details?.authType || "none"}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button variant="ghost" size="sm" onClick={() => handleEdit(provider)}>
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="ghost" size="sm">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete Provider</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete "{provider.name}"? This action cannot be undone and
+                                  will remove the provider from your system.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  asChild
+                                  onClick={() => {
+                                    deleteFetcher.submit(
+                                      {
+                                        intent: "delete",
+                                        id: provider.id,
+                                      },
+                                      { method: "post" },
+                                    );
+                                  }}
+                                >
+                                  <Button variant="destructive" disabled={deleteFetcher.state === "submitting"}>
+                                    {deleteFetcher.state === "submitting" ? "Deleting..." : "Delete"}
+                                  </Button>
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

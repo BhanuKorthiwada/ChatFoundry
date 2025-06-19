@@ -1,7 +1,7 @@
-import { getFormProps, getInputProps, useForm } from "@conform-to/react";
+import { getFormProps, getInputProps, getTextareaProps, useForm } from "@conform-to/react";
 import { getZodConstraint, parseWithZod } from "@conform-to/zod/v4";
 import { AlertCircle, ArrowLeft, Save } from "lucide-react";
-import { Form, Link, data, redirect } from "react-router";
+import { data, Form, Link, redirect } from "react-router";
 import { z } from "zod/v4";
 import { Logger } from "~/.server/log-service";
 import { Button } from "~/components/ui/button";
@@ -172,13 +172,20 @@ export default function ModelCreateRoute(_: Route.ComponentProps) {
   const { providers } = _.loaderData;
   const actionData = _.actionData;
   const [form, fields] = useForm({
-    onValidate(context) {
-      return parseWithZod(context.formData, { schema: modelSchema });
-    },
+    // Sync server validation results
     lastResult: actionData?.result,
-    constraint: getZodConstraint(modelSchema),
+
+    // Validation configuration - best practice
     shouldValidate: "onBlur",
     shouldRevalidate: "onInput",
+
+    // Validation constraints from schema
+    constraint: getZodConstraint(modelSchema),
+
+    // Client-side validation
+    onValidate({ formData }) {
+      return parseWithZod(formData, { schema: modelSchema });
+    },
   });
 
   return (
@@ -209,33 +216,30 @@ export default function ModelCreateRoute(_: Route.ComponentProps) {
               <div className="space-y-2">
                 <Label htmlFor={fields.slug?.id}>Slug *</Label>
                 <Input {...getInputProps(fields.slug, { type: "text" })} placeholder="e.g., gpt-4o, claude-3-sonnet" />
-                {fields.slug?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.slug.errors[0]}
-                  </div>
-                )}
+                <div id={fields.slug?.errorId} className="text-destructive text-sm">
+                  {fields.slug?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor={fields.name?.id}>Name *</Label>
                 <Input {...getInputProps(fields.name, { type: "text" })} placeholder="e.g., GPT-4o, Claude 3 Sonnet" />
-                {fields.name?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.name.errors[0]}
-                  </div>
-                )}
+                <div id={fields.name?.errorId} className="text-destructive text-sm">
+                  {fields.name?.errors}
+                </div>
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor={fields.description?.id}>Description</Label>
               <Textarea
-                {...getInputProps(fields.description, { type: "text" })}
+                {...getTextareaProps(fields.description)}
                 placeholder="Brief description of the model..."
                 rows={3}
               />
+              <div id={fields.description?.errorId} className="text-destructive text-sm">
+                {fields.description?.errors}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -253,17 +257,17 @@ export default function ModelCreateRoute(_: Route.ComponentProps) {
                     ))}
                   </SelectContent>
                 </Select>
-                {fields.providerId?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.providerId.errors[0]}
-                  </div>
-                )}
+                <div id={fields.providerId?.errorId} className="text-destructive text-sm">
+                  {fields.providerId?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor={fields.version?.id}>Version</Label>
                 <Input {...getInputProps(fields.version, { type: "text" })} placeholder="1.0, 2024-01-01" />
+                <div id={fields.version?.errorId} className="text-destructive text-sm">
+                  {fields.version?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -278,6 +282,9 @@ export default function ModelCreateRoute(_: Route.ComponentProps) {
                     <SelectItem value="deprecated">Deprecated</SelectItem>
                   </SelectContent>
                 </Select>
+                <div id={fields.status?.errorId} className="text-destructive text-sm">
+                  {fields.status?.errors}
+                </div>
               </div>
             </div>
 
@@ -313,23 +320,29 @@ export default function ModelCreateRoute(_: Route.ComponentProps) {
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
               <div className="flex items-center space-x-2">
-                <Checkbox id="isPreviewModel" name="isPreviewModel" value="true" />
+                <Checkbox id={fields.isPreviewModel?.id} name="isPreviewModel" value="true" />
                 <Label htmlFor="isPreviewModel">Preview Model</Label>
               </div>
 
               <div className="flex items-center space-x-2">
-                <Checkbox id="isPremiumModel" name="isPremiumModel" value="true" />
+                <Checkbox id={fields.isPremiumModel?.id} name="isPremiumModel" value="true" />
                 <Label htmlFor="isPremiumModel">Premium Model</Label>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor={fields.maxInputTokens?.id}>Max Input Tokens</Label>
                 <Input {...getInputProps(fields.maxInputTokens, { type: "number" })} placeholder="128000" />
+                <div id={fields.maxInputTokens?.errorId} className="text-destructive text-sm">
+                  {fields.maxInputTokens?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor={fields.maxOutputTokens?.id}>Max Output Tokens</Label>
                 <Input {...getInputProps(fields.maxOutputTokens, { type: "number" })} placeholder="4096" />
+                <div id={fields.maxOutputTokens?.errorId} className="text-destructive text-sm">
+                  {fields.maxOutputTokens?.errors}
+                </div>
               </div>
             </div>
 
@@ -339,53 +352,49 @@ export default function ModelCreateRoute(_: Route.ComponentProps) {
                 {...getInputProps(fields.documentationLink, { type: "url" })}
                 placeholder="https://docs.provider.com/models/model-name"
               />
-              {fields.documentationLink?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.documentationLink.errors[0]}
-                </div>
-              )}
+              <div id={fields.documentationLink?.errorId} className="text-destructive text-sm">
+                {fields.documentationLink?.errors}
+              </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor={fields.aliases?.id}>Aliases (JSON)</Label>
               <Textarea
-                {...getInputProps(fields.aliases, { type: "text" })}
+                {...getTextareaProps(fields.aliases)}
                 placeholder='["alternative-name", "legacy-name"]'
                 rows={2}
               />
-              {fields.aliases?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.aliases.errors[0]}
-                </div>
-              )}
+              <div id={fields.aliases?.errorId} className="text-destructive text-sm">
+                {fields.aliases?.errors}
+              </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor={fields.details?.id}>Additional Details (JSON)</Label>
               <Textarea
-                {...getInputProps(fields.details, { type: "text" })}
+                {...getTextareaProps(fields.details)}
                 placeholder='{"context_length": 128000, "training_data": "2024-04"}'
                 rows={3}
               />
-              {fields.details?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.details.errors[0]}
-                </div>
-              )}
+              <div id={fields.details?.errorId} className="text-destructive text-sm">
+                {fields.details?.errors}
+              </div>
             </div>
 
             {form.errors && (
-              <div className="flex items-center gap-2 text-destructive text-sm">
-                <AlertCircle className="h-4 w-4" />
-                {form.errors[0]}
+              <div className="rounded-md bg-destructive/15 p-3" id={form.errorId}>
+                <div className="flex">
+                  <AlertCircle className="h-5 w-5 text-destructive" />
+                  <div className="ml-3">
+                    <h3 className="font-medium text-destructive text-sm">Validation Error</h3>
+                    <div className="mt-1 text-destructive text-sm">{form.errors}</div>
+                  </div>
+                </div>
               </div>
             )}
 
             <div className="flex items-center gap-4 pt-4">
-              <Button type="submit" className="flex items-center gap-2">
+              <Button type="submit" name="intent" value="create" className="flex items-center gap-2">
                 <Save className="h-4 w-4" />
                 Create Model
               </Button>

@@ -1,7 +1,7 @@
-import { getFormProps, getInputProps, useForm } from "@conform-to/react";
+import { getFormProps, getInputProps, getTextareaProps, useForm } from "@conform-to/react";
 import { getZodConstraint, parseWithZod } from "@conform-to/zod/v4";
 import { AlertCircle, ArrowLeft, Save } from "lucide-react";
-import { Form, Link, data, redirect } from "react-router";
+import { data, Form, Link, redirect } from "react-router";
 import { z } from "zod/v4";
 import { Logger } from "~/.server/log-service";
 import { Button } from "~/components/ui/button";
@@ -141,10 +141,20 @@ export async function action({ request, context }: Route.ActionArgs) {
 export default function ProviderCreateRoute(_: Route.ComponentProps) {
   const actionData = _.actionData;
   const [form, fields] = useForm({
+    // Sync server validation results
     lastResult: actionData?.result,
-    constraint: getZodConstraint(providerSchema),
+
+    // Validation configuration - best practice
     shouldValidate: "onBlur",
     shouldRevalidate: "onInput",
+
+    // Validation constraints from schema
+    constraint: getZodConstraint(providerSchema),
+
+    // Client-side validation
+    onValidate({ formData }) {
+      return parseWithZod(formData, { schema: providerSchema });
+    },
   });
 
   return (
@@ -178,12 +188,9 @@ export default function ProviderCreateRoute(_: Route.ComponentProps) {
                   {...(fields.slug ? getInputProps(fields.slug, { type: "text" }) : {})}
                   placeholder="e.g., openai, anthropic"
                 />
-                {fields.slug?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.slug.errors[0]}
-                  </div>
-                )}
+                <div id={fields.slug?.errorId} className="text-destructive text-sm">
+                  {fields.slug?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -192,22 +199,22 @@ export default function ProviderCreateRoute(_: Route.ComponentProps) {
                   {...(fields.name ? getInputProps(fields.name, { type: "text" }) : {})}
                   placeholder="e.g., OpenAI, Anthropic"
                 />
-                {fields.name?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.name.errors[0]}
-                  </div>
-                )}
+                <div id={fields.name?.errorId} className="text-destructive text-sm">
+                  {fields.name?.errors}
+                </div>
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor={fields.description?.id}>Description</Label>
               <Textarea
-                {...(fields.description ? getInputProps(fields.description, { type: "text" }) : {})}
+                {...(fields.description ? getTextareaProps(fields.description) : {})}
                 placeholder="Brief description of the provider..."
                 rows={3}
               />
+              <div id={fields.description?.errorId} className="text-destructive text-sm">
+                {fields.description?.errors}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -217,12 +224,9 @@ export default function ProviderCreateRoute(_: Route.ComponentProps) {
                   {...(fields.baseUrl ? getInputProps(fields.baseUrl, { type: "url" }) : {})}
                   placeholder="https://api.provider.com"
                 />
-                {fields.baseUrl?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.baseUrl.errors[0]}
-                  </div>
-                )}
+                <div id={fields.baseUrl?.errorId} className="text-destructive text-sm">
+                  {fields.baseUrl?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -231,6 +235,9 @@ export default function ProviderCreateRoute(_: Route.ComponentProps) {
                   {...(fields.apiVersion ? getInputProps(fields.apiVersion, { type: "text" }) : {})}
                   placeholder="v1, 2024-01-01"
                 />
+                <div id={fields.apiVersion?.errorId} className="text-destructive text-sm">
+                  {fields.apiVersion?.errors}
+                </div>
               </div>
             </div>
 
@@ -247,12 +254,9 @@ export default function ProviderCreateRoute(_: Route.ComponentProps) {
                     <SelectItem value="deprecated">Deprecated</SelectItem>
                   </SelectContent>
                 </Select>
-                {fields.status?.errors && (
-                  <div className="flex items-center gap-2 text-destructive text-sm">
-                    <AlertCircle className="h-4 w-4" />
-                    {fields.status.errors[0]}
-                  </div>
-                )}
+                <div id={fields.status?.errorId} className="text-destructive text-sm">
+                  {fields.status?.errors}
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -267,48 +271,50 @@ export default function ProviderCreateRoute(_: Route.ComponentProps) {
                     <SelectItem value="none">None</SelectItem>
                   </SelectContent>
                 </Select>
+                <div id={fields.authType?.errorId} className="text-destructive text-sm">
+                  {fields.authType?.errors}
+                </div>
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor={fields.headers?.id}>Headers (JSON)</Label>
               <Textarea
-                {...(fields.headers ? getInputProps(fields.headers, { type: "text" }) : {})}
+                {...(fields.headers ? getTextareaProps(fields.headers) : {})}
                 placeholder='{"Content-Type": "application/json", "User-Agent": "MyApp/1.0"}'
                 rows={3}
               />
-              {fields.headers?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.headers.errors[0]}
-                </div>
-              )}
+              <div id={fields.headers?.errorId} className="text-destructive text-sm">
+                {fields.headers?.errors}
+              </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor={fields.rateLimits?.id}>Rate Limits (JSON)</Label>
               <Textarea
-                {...(fields.rateLimits ? getInputProps(fields.rateLimits, { type: "text" }) : {})}
+                {...(fields.rateLimits ? getTextareaProps(fields.rateLimits) : {})}
                 placeholder='{"requestsPerMinute": 100, "tokensPerMinute": 60000}'
                 rows={3}
               />
-              {fields.rateLimits?.errors && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {fields.rateLimits.errors[0]}
-                </div>
-              )}
+              <div id={fields.rateLimits?.errorId} className="text-destructive text-sm">
+                {fields.rateLimits?.errors}
+              </div>
             </div>
 
             {form.errors && (
-              <div className="flex items-center gap-2 text-destructive text-sm">
-                <AlertCircle className="h-4 w-4" />
-                {form.errors[0]}
+              <div className="rounded-md bg-destructive/15 p-3" id={form.errorId}>
+                <div className="flex">
+                  <AlertCircle className="h-5 w-5 text-destructive" />
+                  <div className="ml-3">
+                    <h3 className="font-medium text-destructive text-sm">Validation Error</h3>
+                    <div className="mt-1 text-destructive text-sm">{form.errors}</div>
+                  </div>
+                </div>
               </div>
             )}
 
             <div className="flex items-center gap-4 pt-4">
-              <Button type="submit" className="flex items-center gap-2">
+              <Button type="submit" name="intent" value="create" className="flex items-center gap-2">
                 <Save className="h-4 w-4" />
                 Create Provider
               </Button>
