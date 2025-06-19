@@ -1,0 +1,11 @@
+User-agent: *
+
+Disallow: /auth/
+Disallow: /admin/
+Disallow: /chat/
+Disallow: /models/
+Disallow: /providers/
+Disallow: /threads/
+Disallow: /api/
+
+Allow: /

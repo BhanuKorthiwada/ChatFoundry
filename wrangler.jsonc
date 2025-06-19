@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chatfoundry",
+  "main": "./workers/app.ts",
+  "compatibility_date": "2025-06-16",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./build/client/",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*", "!/images/*"]
+  },
+  "observability": {
+    "enabled": true
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CF_KV",
+      "id": "xyz",
+      "preview_id": "app_kv_preview_id"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "CF_DB",
+      "database_name": "chatfoundry",
+      "database_id": "xyz",
+      "preview_database_id": "d1_db_preview_id",
+      "migrations_dir": "drizzle",
+      "migrations_table": "zzz_migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "bucket_name": "chatfoundry",
+      "binding": "CF_R2"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "staging",
+    "BETTER_AUTH_SECRET": "...", // https://generate-secret.vercel.app/32
+    "BETTER_AUTH_URL": "http://localhost:4010",
+    "GITHUB_CLIENT_ID": "...",
+    "GITHUB_CLIENT_SECRET": "...",
+    "GOOGLE_CLIENT_ID": "...",
+    "GOOGLE_CLIENT_SECRET": "..."
+  }
+}

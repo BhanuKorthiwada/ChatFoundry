@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1750106784358,
+      "tag": "20250616204624_majestic_the_stranger",
+      "breakpoints": true
+    }
+  ]
+}
